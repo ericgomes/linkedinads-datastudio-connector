@@ -1,0 +1,28 @@
+{
+  "timeZone": "America/Sao_Paulo",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "OAuth2",
+        "libraryId": "1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF",
+        "version": "43"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "dataStudio": {
+    "name": "LinkedIn Ads",
+    "logoUrl": "https://www.gstatic.com/images/branding/product/2x/data_studio_48dp.png",
+    "company": "Agência Linka",
+    "companyUrl": "https://agencialinka.com.br",
+    "addonUrl": "https://agencialinka.com.br",
+    "supportUrl": "https://agencialinka.com.br",
+    "description": "Conector LinkedIn Ads para Looker Studio. Suporta níveis conta/grupo/campanha/criativo e as principais métricas de performance.",
+    "sources": ["LinkedIn Ads"]
+  },
+  "urlFetchWhitelist": [
+    "https://api.linkedin.com/",
+    "https://www.linkedin.com/"
+  ]
+}
