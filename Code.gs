@@ -191,8 +191,7 @@ function buildData(request) {
   var reqFields = request.fields.map(function (f) { return f.name; });
   var dims      = reqFields.filter(function (f) { return DIMENSION_IDS.indexOf(f) >= 0; });
 
-  var pivot       = choosePivot(dims);
-  // LinkedIn é plataforma única: sem breakdown, então basta o pivot + granularidade.
+  var pivots      = requestedPivots(dims); // 0..3 níveis de hierarquia
   var granularity = dims.indexOf('date') >= 0 ? 'DAILY'
                   : dims.indexOf('year_month') >= 0 ? 'MONTHLY'
                   : 'ALL';
@@ -202,9 +201,9 @@ function buildData(request) {
                             .map(function (f) { return METRIC_API[f]; });
   var fields = uniq(['pivotValues', 'dateRange'].concat(apiMetrics));
 
-  var elements  = fetchAnalytics(accountId, pivot, granularity, request.dateRange, fields);
+  var elements  = fetchAnalytics(accountId, pivots, granularity, request.dateRange, fields);
   var accName   = resolveAccountName(accountId);
-  var nameMap   = resolveNames(accountId, elements, pivot);
+  var nameMap   = resolveAllNames(accountId, elements);
 
   var allSchema = getSchema(request).schema;
   var reqSchema = allSchema.filter(function (s) { return reqFields.indexOf(s.name) >= 0; });
@@ -212,7 +211,7 @@ function buildData(request) {
   var rows = elements.map(function (el) {
     return {
       values: reqSchema.map(function (field) {
-        return liExtract(field.name, el, pivot, accountId, accName, nameMap);
+        return liExtract(field.name, el, accountId, accName, nameMap);
       })
     };
   });
@@ -220,26 +219,28 @@ function buildData(request) {
   return { schema: reqSchema, rows: rows };
 }
 
-// Pivot da API conforme a dimensão de hierarquia mais fina pedida.
-// Lembrete do deslocamento de nomenclatura (ver getSchema):
-//   Anúncio -> CREATIVE | Conjunto -> CAMPAIGN | Campanha -> CAMPAIGN_GROUP
-function choosePivot(dims) {
-  if (dims.indexOf('ad_id') >= 0 || dims.indexOf('ad_name') >= 0) return 'CREATIVE';
-  if (dims.indexOf('adset_id') >= 0 || dims.indexOf('adset_name') >= 0) return 'CAMPAIGN';
-  if (dims.indexOf('campaign_id') >= 0 || dims.indexOf('campaign_name') >= 0) return 'CAMPAIGN_GROUP';
-  return 'ACCOUNT';
+// Pivots pedidos (todos os níveis de hierarquia presentes, até 3).
+// Deslocamento de nomenclatura (ver getSchema):
+//   Campanha -> CAMPAIGN_GROUP | Conjunto -> CAMPAIGN | Anúncio -> CREATIVE
+function requestedPivots(dims) {
+  var p = [];
+  if (dims.indexOf('campaign_id') >= 0 || dims.indexOf('campaign_name') >= 0) p.push('CAMPAIGN_GROUP');
+  if (dims.indexOf('adset_id')    >= 0 || dims.indexOf('adset_name')    >= 0) p.push('CAMPAIGN');
+  if (dims.indexOf('ad_id')       >= 0 || dims.indexOf('ad_name')       >= 0) p.push('CREATIVE');
+  return p;
 }
 
-// GET /rest/adAnalytics?q=analytics&pivot=..&timeGranularity=..&dateRange=..&accounts=List(..)&fields=..
-function fetchAnalytics(accountId, pivot, granularity, dateRange, fields) {
-  var accUrn = 'urn:li:sponsoredAccount:' + accountId;
-  var url = LI_API + '/rest/adAnalytics'
-    + '?q=analytics'
-    + '&pivot=' + pivot
-    + '&timeGranularity=' + granularity
+// Busca analytics. 0 pivots -> Analytics finder no nível conta; 1..3 pivots ->
+// Statistics finder (retorna a hierarquia completa em pivotValues por linha,
+// resolvendo o problema de níveis pais virem vazios num único pivot).
+function fetchAnalytics(accountId, pivots, granularity, dateRange, fields) {
+  var common = '&timeGranularity=' + granularity
     + '&dateRange=' + liDateRange(dateRange.startDate, dateRange.endDate)
-    + '&accounts=' + encodeURIComponent('List(' + accUrn + ')')
+    + '&accounts=' + encodeURIComponent('List(urn:li:sponsoredAccount:' + accountId + ')')
     + '&fields=' + fields.join(',');
+  var url = pivots.length === 0
+    ? LI_API + '/rest/adAnalytics?q=analytics&pivot=ACCOUNT' + common
+    : LI_API + '/rest/adAnalytics?q=statistics&pivots=List(' + pivots.join(',') + ')' + common;
   var data = liGet(url);
   return data.elements || [];
 }
@@ -257,42 +258,42 @@ function liDateRange(start, end) {
 // Resolução de nomes (pivotValues vêm como URN; precisamos do nome legível)
 // ---------------------------------------------------------------------------
 
-// Resolve URN -> nome. Endpoints são aninhados sob a conta:
-//   /rest/adAccounts/{acc}/adCampaigns | adCampaignGroups | creatives
-// Retorna map keyed pelo id numérico (urnId) -> nome, para uso uniforme.
-function resolveNames(accountId, elements, pivot) {
+// Resolve URN -> nome para TODOS os tipos presentes nos elements (campanha,
+// conjunto, anúncio). Retorna um map keyed pela URN completa -> nome.
+// Endpoints aninhados sob a conta; no batch, o `List(...)` fica LITERAL (encodar
+// o List inteiro dá erro 400); só os `:` das URNs de criativo são encodados.
+function resolveAllNames(accountId, elements) {
   var map = {};
-  if (pivot === 'ACCOUNT') return map; // nome da conta vem de resolveAccountName
-
-  var urns = [];
+  var byType = {}; // tipo da URN -> [urns únicas]
   elements.forEach(function (el) {
-    var urn = (el.pivotValues || [])[0];
-    if (urn && urns.indexOf(urn) < 0) urns.push(urn);
+    (el.pivotValues || []).forEach(function (urn) {
+      var t = urnType(urn);
+      if (t === 'sponsoredAccount' || !t) return; // conta resolvida à parte
+      byType[t] = byType[t] || [];
+      if (byType[t].indexOf(urn) < 0) byType[t].push(urn);
+    });
   });
-  if (!urns.length) return map;
 
-  // IMPORTANTE: no batch de entidades, o `List(...)` e as vírgulas devem ficar
-  // LITERAIS (encodar o List inteiro dá erro 400). Só os `:` das URNs (criativos)
-  // são encodados.
   var base = LI_API + '/rest/adAccounts/' + accountId + '/';
-  try {
-    if (pivot === 'CREATIVE') {
-      // Criativos: batch por URN (com `:` encodados); results keyed pela URN.
-      var idList = 'List(' + urns.map(function (u) { return encodeURIComponent(u); }).join(',') + ')';
-      var data = liGet(base + 'creatives?ids=' + idList);
-      var r = data.results || {};
-      Object.keys(r).forEach(function (k) { map[urnId(k)] = (r[k] && r[k].name) || ('#' + urnId(k)); });
-    } else {
-      // Campanhas / grupos: batch por id numérico; results keyed pelo id.
-      var entity = pivot === 'CAMPAIGN' ? 'adCampaigns' : 'adCampaignGroups';
-      var ids = urns.map(function (u) { return urnId(u); });
-      var data2 = liGet(base + entity + '?ids=List(' + ids.join(',') + ')');
-      var r2 = data2.results || {};
-      Object.keys(r2).forEach(function (id) { map[id] = (r2[id] && r2[id].name) || ('#' + id); });
+  Object.keys(byType).forEach(function (t) {
+    var urns = byType[t];
+    try {
+      if (t === 'sponsoredCreative') {
+        var idList = 'List(' + urns.map(function (u) { return encodeURIComponent(u); }).join(',') + ')';
+        var r = liGet(base + 'creatives?ids=' + idList).results || {};
+        Object.keys(r).forEach(function (k) { map[k] = (r[k] && r[k].name) || ('#' + urnId(k)); });
+      } else {
+        var entity = t === 'sponsoredCampaign' ? 'adCampaigns' : 'adCampaignGroups';
+        var ids = urns.map(function (u) { return urnId(u); });
+        var r2 = liGet(base + entity + '?ids=List(' + ids.join(',') + ')').results || {};
+        Object.keys(r2).forEach(function (id) {
+          map['urn:li:' + t + ':' + id] = (r2[id] && r2[id].name) || ('#' + id);
+        });
+      }
+    } catch (e) {
+      // Sem nomes desse tipo: as dimensões caem no id.
     }
-  } catch (e) {
-    // Sem nomes: as dimensões de nome caem no id.
-  }
+  });
   return map;
 }
 
@@ -309,20 +310,19 @@ function resolveAccountName(accountId) {
 // Extração de valores
 // ---------------------------------------------------------------------------
 
-function liExtract(fieldName, el, pivot, accountId, accName, nameMap) {
+function liExtract(fieldName, el, accountId, accName, nameMap) {
   var d = el.dateRange && el.dateRange.start;
-  var id = pivotId(el);
   switch (fieldName) {
     case 'date':                return d ? ('' + d.year + pad(d.month) + pad(d.day)) : '';
     case 'year_month':          return d ? ('' + d.year + pad(d.month)) : '';
     case 'account_id':          return String(accountId);
     case 'account_name':        return accName;
-    case 'campaign_id':   return pivot === 'CAMPAIGN_GROUP' ? id : '';           // API campaignGroup
-    case 'campaign_name': return pivot === 'CAMPAIGN_GROUP' ? (nameMap[id] || id) : '';
-    case 'adset_id':      return pivot === 'CAMPAIGN' ? id : '';                 // API campaign
-    case 'adset_name':    return pivot === 'CAMPAIGN' ? (nameMap[id] || id) : '';
-    case 'ad_id':         return pivot === 'CREATIVE' ? id : '';                 // API creative
-    case 'ad_name':       return pivot === 'CREATIVE' ? (nameMap[id] || id) : '';
+    case 'campaign_id':   return hierId(el, 'sponsoredCampaignGroup');           // painel: Campanha
+    case 'campaign_name': return hierName(el, 'sponsoredCampaignGroup', nameMap);
+    case 'adset_id':      return hierId(el, 'sponsoredCampaign');                // painel: Conjunto
+    case 'adset_name':    return hierName(el, 'sponsoredCampaign', nameMap);
+    case 'ad_id':         return hierId(el, 'sponsoredCreative');               // painel: Anúncio
+    case 'ad_name':       return hierName(el, 'sponsoredCreative', nameMap);
     case 'impressions':         return intVal(el.impressions);
     case 'clicks':              return intVal(el.clicks);
     case 'landing_page_clicks': return intVal(el.landingPageClicks);
@@ -365,7 +365,18 @@ function liGet(url) {
   return data;
 }
 
-function pivotId(el)   { return urnId((el.pivotValues || [])[0] || ''); }
+// Acha, entre os pivotValues da linha, a URN do tipo pedido (ex.: sponsoredCampaign).
+function urnOfType(pivotValues, type) {
+  pivotValues = pivotValues || [];
+  for (var i = 0; i < pivotValues.length; i++) {
+    if (String(pivotValues[i]).indexOf('urn:li:' + type + ':') === 0) return pivotValues[i];
+  }
+  return '';
+}
+function hierId(el, type)          { var u = urnOfType(el.pivotValues, type); return u ? urnId(u) : ''; }
+function hierName(el, type, nameMap) { var u = urnOfType(el.pivotValues, type); return u ? (nameMap[u] || urnId(u)) : ''; }
+
+function urnType(urn)  { var p = String(urn).split(':'); return p.length >= 4 ? p[2] : ''; }
 function urnId(urn)    { var p = String(urn).split(':'); return p[p.length - 1] || ''; }
 function pad(n)        { return (n < 10 ? '0' : '') + n; }
 function intVal(v)     { return parseInt(v || 0, 10); }
