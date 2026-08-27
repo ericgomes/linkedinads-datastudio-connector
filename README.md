@@ -11,7 +11,7 @@ Conector **Community** do Looker Studio (Google Apps Script) que puxa dados do
 
 - 🔐 Autenticação **OAuth 2.0** (com refresh automático de token)
 - 🏢 Seleção de conta de anúncios
-- 📊 Níveis: **Conta → Grupo de Campanha → Campanha → Criativo** (via pivots)
+- 📊 Níveis: **Conta → Campanha → Conjunto → Anúncio** (nomenclatura do Campaign Manager; a API interna usa campaignGroup/campaign/creative)
 - 📅 Dimensões de data: dia e Ano-Mês
 - 📈 Métricas de performance + razões (CPM, CPC, CTR, CPL, custo/conversão) como campos com fórmula
 

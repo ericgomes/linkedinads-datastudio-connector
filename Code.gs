@@ -113,12 +113,17 @@ function getSchema(request) {
   f.newDimension().setId('year_month').setName('Data (Ano Mês)').setType(T.YEAR_MONTH);
   f.newDimension().setId('account_id').setName('ID Conta').setType(T.TEXT);
   f.newDimension().setId('account_name').setName('Conta').setType(T.TEXT);
-  f.newDimension().setId('campaign_group_id').setName('ID Grupo de Campanha').setType(T.TEXT);
-  f.newDimension().setId('campaign_group_name').setName('Grupo de Campanha').setType(T.TEXT);
+  // A nomenclatura da API do LinkedIn é deslocada 1 nível em relação ao Campaign
+  // Manager (e ao Meta). Mapeamos para a nomenclatura do painel/Meta:
+  //   API sponsoredCampaignGroup -> "Campanha"             (pivot CAMPAIGN_GROUP)
+  //   API sponsoredCampaign      -> "Conjunto de Anúncios" (pivot CAMPAIGN)
+  //   API sponsoredCreative      -> "Anúncio"              (pivot CREATIVE)
   f.newDimension().setId('campaign_id').setName('ID Campanha').setType(T.TEXT);
   f.newDimension().setId('campaign_name').setName('Campanha').setType(T.TEXT);
-  f.newDimension().setId('creative_id').setName('ID Criativo').setType(T.TEXT);
-  f.newDimension().setId('creative_name').setName('Criativo').setType(T.TEXT);
+  f.newDimension().setId('adset_id').setName('ID Conjunto').setType(T.TEXT);
+  f.newDimension().setId('adset_name').setName('Conjunto de Anúncios').setType(T.TEXT);
+  f.newDimension().setId('ad_id').setName('ID Anúncio').setType(T.TEXT);
+  f.newDimension().setId('ad_name').setName('Anúncio').setType(T.TEXT);
 
   // Metrics base (aditivas)
   f.newMetric().setId('impressions').setName('Impressões').setType(T.NUMBER).setAggregation(A.SUM);
@@ -154,8 +159,7 @@ function getSchema(request) {
 // ---------------------------------------------------------------------------
 
 var DIMENSION_IDS = ['date', 'year_month', 'account_id', 'account_name',
-  'campaign_group_id', 'campaign_group_name', 'campaign_id', 'campaign_name',
-  'creative_id', 'creative_name'];
+  'campaign_id', 'campaign_name', 'adset_id', 'adset_name', 'ad_id', 'ad_name'];
 
 // Métrica do schema -> campo da API adAnalytics (fields=)
 var METRIC_API = {
@@ -217,10 +221,12 @@ function buildData(request) {
 }
 
 // Pivot da API conforme a dimensão de hierarquia mais fina pedida.
+// Lembrete do deslocamento de nomenclatura (ver getSchema):
+//   Anúncio -> CREATIVE | Conjunto -> CAMPAIGN | Campanha -> CAMPAIGN_GROUP
 function choosePivot(dims) {
-  if (dims.indexOf('creative_id') >= 0 || dims.indexOf('creative_name') >= 0) return 'CREATIVE';
-  if (dims.indexOf('campaign_id') >= 0 || dims.indexOf('campaign_name') >= 0) return 'CAMPAIGN';
-  if (dims.indexOf('campaign_group_id') >= 0 || dims.indexOf('campaign_group_name') >= 0) return 'CAMPAIGN_GROUP';
+  if (dims.indexOf('ad_id') >= 0 || dims.indexOf('ad_name') >= 0) return 'CREATIVE';
+  if (dims.indexOf('adset_id') >= 0 || dims.indexOf('adset_name') >= 0) return 'CAMPAIGN';
+  if (dims.indexOf('campaign_id') >= 0 || dims.indexOf('campaign_name') >= 0) return 'CAMPAIGN_GROUP';
   return 'ACCOUNT';
 }
 
@@ -311,12 +317,12 @@ function liExtract(fieldName, el, pivot, accountId, accName, nameMap) {
     case 'year_month':          return d ? ('' + d.year + pad(d.month)) : '';
     case 'account_id':          return String(accountId);
     case 'account_name':        return accName;
-    case 'campaign_group_id':   return pivot === 'CAMPAIGN_GROUP' ? id : '';
-    case 'campaign_group_name': return pivot === 'CAMPAIGN_GROUP' ? (nameMap[id] || id) : '';
-    case 'campaign_id':         return pivot === 'CAMPAIGN' ? id : '';
-    case 'campaign_name':       return pivot === 'CAMPAIGN' ? (nameMap[id] || id) : '';
-    case 'creative_id':         return pivot === 'CREATIVE' ? id : '';
-    case 'creative_name':       return pivot === 'CREATIVE' ? (nameMap[id] || id) : '';
+    case 'campaign_id':   return pivot === 'CAMPAIGN_GROUP' ? id : '';           // API campaignGroup
+    case 'campaign_name': return pivot === 'CAMPAIGN_GROUP' ? (nameMap[id] || id) : '';
+    case 'adset_id':      return pivot === 'CAMPAIGN' ? id : '';                 // API campaign
+    case 'adset_name':    return pivot === 'CAMPAIGN' ? (nameMap[id] || id) : '';
+    case 'ad_id':         return pivot === 'CREATIVE' ? id : '';                 // API creative
+    case 'ad_name':       return pivot === 'CREATIVE' ? (nameMap[id] || id) : '';
     case 'impressions':         return intVal(el.impressions);
     case 'clicks':              return intVal(el.clicks);
     case 'landing_page_clicks': return intVal(el.landingPageClicks);

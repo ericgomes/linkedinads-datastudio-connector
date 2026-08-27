@@ -46,7 +46,7 @@
 | Meta | LinkedIn |
 |------|----------|
 | System User Token (não expira) | OAuth 2.0 (access 60d, refresh 365d) |
-| Campanha → Conjunto → Anúncio | Grupo de Campanha → Campanha → Criativo |
+| Campanha → Conjunto → Anúncio | Campanha → Conjunto → Anúncio (mesma nomenclatura; a API interna usa campaignGroup/campaign/creative) |
 | `/insights` + breakdowns | `/rest/adAnalytics` + pivots |
 | Facebook/Instagram/Audience | Plataforma única (sem breakdown) |
 | Acesso imediato | Aprovação do Marketing API (semanas) |
