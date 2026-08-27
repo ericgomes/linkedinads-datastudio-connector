@@ -54,5 +54,8 @@
 ## Métricas disponíveis
 
 Impressões, Cliques, Cliques no Link, Investimento, Conversões, Leads, Reações,
-Comentários, Compartilhamentos, Views de Vídeo, Alcance (aprox), e as razões
-CPM, CPC, CTR, Custo por Conversão, Custo por Lead, Taxa de Conversão.
+Comentários, Compartilhamentos, Views de Vídeo, e as razões CPM, CPC, CTR,
+Custo por Conversão, Custo por Lead, Taxa de Conversão.
+
+> Nota: o `approximateMemberReach` (alcance) não é retornado pela API na versão
+> atual, então não há dimensão/métrica de alcance neste conector.

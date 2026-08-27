@@ -131,7 +131,6 @@ function getSchema(request) {
   f.newMetric().setId('comments').setName('Comentários').setType(T.NUMBER).setAggregation(A.SUM);
   f.newMetric().setId('shares').setName('Compartilhamentos').setType(T.NUMBER).setAggregation(A.SUM);
   f.newMetric().setId('video_views').setName('Views de Vídeo').setType(T.NUMBER).setAggregation(A.SUM);
-  f.newMetric().setId('reach').setName('Alcance (aprox)').setType(T.NUMBER).setAggregation(A.SUM);
 
   // Métricas de razão como fórmula (agregam corretamente em qualquer nível)
   f.newMetric().setId('cpm').setName('CPM').setType(T.CURRENCY_BRL)
@@ -169,8 +168,7 @@ var METRIC_API = {
   reactions:           'reactions',
   comments:            'comments',
   shares:              'shares',
-  video_views:         'videoViews',
-  reach:               'approximateMemberReach'
+  video_views:         'videoViews'
 };
 
 function getData(request) {
@@ -202,7 +200,7 @@ function buildData(request) {
 
   var elements  = fetchAnalytics(accountId, pivot, granularity, request.dateRange, fields);
   var accName   = resolveAccountName(accountId);
-  var nameMap   = resolveNames(elements, pivot);
+  var nameMap   = resolveNames(accountId, elements, pivot);
 
   var allSchema = getSchema(request).schema;
   var reqSchema = allSchema.filter(function (s) { return reqFields.indexOf(s.name) >= 0; });
@@ -253,31 +251,35 @@ function liDateRange(start, end) {
 // Resolução de nomes (pivotValues vêm como URN; precisamos do nome legível)
 // ---------------------------------------------------------------------------
 
-// Batch: GET /rest/{entity}?ids=List(1,2,3) -> map { "urn:li:...:id": nome }
-function resolveNames(elements, pivot) {
+// Resolve URN -> nome. Endpoints são aninhados sob a conta:
+//   /rest/adAccounts/{acc}/adCampaigns | adCampaignGroups | creatives
+// Retorna map keyed pelo id numérico (urnId) -> nome, para uso uniforme.
+function resolveNames(accountId, elements, pivot) {
   var map = {};
   if (pivot === 'ACCOUNT') return map; // nome da conta vem de resolveAccountName
 
-  var entity = pivot === 'CREATIVE'       ? 'adCreatives'
-             : pivot === 'CAMPAIGN'       ? 'adCampaigns'
-             : 'adCampaignGroups';
-
-  var ids = [];
+  var urns = [];
   elements.forEach(function (el) {
     var urn = (el.pivotValues || [])[0];
-    if (urn) { var id = urnId(urn); if (ids.indexOf(id) < 0) ids.push(id); }
+    if (urn && urns.indexOf(urn) < 0) urns.push(urn);
   });
-  if (!ids.length) return map;
+  if (!urns.length) return map;
 
+  var base = LI_API + '/rest/adAccounts/' + accountId + '/';
   try {
-    var data = liGet(LI_API + '/rest/' + entity + '?ids=' + encodeURIComponent('List(' + ids.join(',') + ')'));
-    var results = data.results || {};
-    Object.keys(results).forEach(function (id) {
-      var e = results[id];
-      // TODO validar: campanhas/grupos têm `name`; criativos podem exigir
-      // resolução extra (referência ao conteúdo). Cai no id quando ausente.
-      map[id] = (e && e.name) ? e.name : ('#' + id);
-    });
+    if (pivot === 'CREATIVE') {
+      // Criativos: batch por URN; results vêm keyed pela URN.
+      var data = liGet(base + 'creatives?ids=' + encodeURIComponent('List(' + urns.join(',') + ')'));
+      var r = data.results || {};
+      Object.keys(r).forEach(function (k) { map[urnId(k)] = (r[k] && r[k].name) || ('#' + urnId(k)); });
+    } else {
+      // Campanhas / grupos: batch por id numérico; results keyed pelo id.
+      var entity = pivot === 'CAMPAIGN' ? 'adCampaigns' : 'adCampaignGroups';
+      var ids = urns.map(function (u) { return urnId(u); });
+      var data2 = liGet(base + entity + '?ids=' + encodeURIComponent('List(' + ids.join(',') + ')'));
+      var r2 = data2.results || {};
+      Object.keys(r2).forEach(function (id) { map[id] = (r2[id] && r2[id].name) || ('#' + id); });
+    }
   } catch (e) {
     // Sem nomes: as dimensões de nome caem no id.
   }
@@ -321,7 +323,6 @@ function liExtract(fieldName, el, pivot, accountId, accName, nameMap) {
     case 'comments':            return intVal(el.comments);
     case 'shares':              return intVal(el.shares);
     case 'video_views':         return intVal(el.videoViews);
-    case 'reach':               return intVal(el.approximateMemberReach);
     // cpm/cpc/ctr/cost_per_conversion/cost_per_lead/conversion_rate são fórmulas.
     default:                    return null;
   }
