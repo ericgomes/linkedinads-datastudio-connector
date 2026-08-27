@@ -265,18 +265,22 @@ function resolveNames(accountId, elements, pivot) {
   });
   if (!urns.length) return map;
 
+  // IMPORTANTE: no batch de entidades, o `List(...)` e as vírgulas devem ficar
+  // LITERAIS (encodar o List inteiro dá erro 400). Só os `:` das URNs (criativos)
+  // são encodados.
   var base = LI_API + '/rest/adAccounts/' + accountId + '/';
   try {
     if (pivot === 'CREATIVE') {
-      // Criativos: batch por URN; results vêm keyed pela URN.
-      var data = liGet(base + 'creatives?ids=' + encodeURIComponent('List(' + urns.join(',') + ')'));
+      // Criativos: batch por URN (com `:` encodados); results keyed pela URN.
+      var idList = 'List(' + urns.map(function (u) { return encodeURIComponent(u); }).join(',') + ')';
+      var data = liGet(base + 'creatives?ids=' + idList);
       var r = data.results || {};
       Object.keys(r).forEach(function (k) { map[urnId(k)] = (r[k] && r[k].name) || ('#' + urnId(k)); });
     } else {
       // Campanhas / grupos: batch por id numérico; results keyed pelo id.
       var entity = pivot === 'CAMPAIGN' ? 'adCampaigns' : 'adCampaignGroups';
       var ids = urns.map(function (u) { return urnId(u); });
-      var data2 = liGet(base + entity + '?ids=' + encodeURIComponent('List(' + ids.join(',') + ')'));
+      var data2 = liGet(base + entity + '?ids=List(' + ids.join(',') + ')');
       var r2 = data2.results || {};
       Object.keys(r2).forEach(function (id) { map[id] = (r2[id] && r2[id].name) || ('#' + id); });
     }
